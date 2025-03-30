@@ -89,8 +89,7 @@ func postHandler(c *fiber.Ctx, db *sql.DB) error {
 	}
 	log.Printf("%v", newTodo)
 	if newTodo.Item != "" {
-		_, err := db.Exec("INSERT into todos VALUES ($1)", newTodo.Item)
-		if err != nil {
+		if _, err := db.Exec("INSERT into todos VALUES ($1)", newTodo.Item); err != nil {
 			log.Fatalf("postHandler - db.Exec failed to insert %q: %v", newTodo.Item, err)
 		}
 	}
@@ -101,7 +100,9 @@ func putHandler(c *fiber.Ctx, db *sql.DB) error {
 	olditem := c.Query("olditem")
 	newitem := c.Query("newitem")
 	log.Printf("putHandler - olditem: %q, newitem: %q", olditem, newitem)
-	db.Exec("UPDATE todos SET item=$1 WHERE item=$2", newitem, olditem)
+	if _, err := db.Exec("UPDATE todos SET item=$1 WHERE item=$2", newitem, olditem); err != nil {
+		log.Fatalf("putHandler - db.Exec failed to update: %v", err)
+	}
 	log.Println("putHandler - update complete")
 	return c.SendString("renamed")
 }
@@ -109,7 +110,9 @@ func putHandler(c *fiber.Ctx, db *sql.DB) error {
 func deleteHandler(c *fiber.Ctx, db *sql.DB) error {
 	todoToDelete := c.Query("item")
 	log.Printf("deleteHandler - todoToDelete: %q", todoToDelete)
-	db.Exec("DELETE from todos WHERE item=$1", todoToDelete)
+	if _, err := db.Exec("DELETE from todos WHERE item=$1", todoToDelete); err != nil {
+		log.Fatalf("deleteHandler - db.Exec failed to delete %q: %v", todoToDelete, err)
+	}
 	log.Println("deleteHandler - delete complete")
 	return c.SendString("deleted")
 }
