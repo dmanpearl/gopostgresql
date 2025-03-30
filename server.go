@@ -29,6 +29,13 @@ func main() {
 	}
 	log.Println("db opened")
 
+	// Test the connection
+	err = db.Ping()
+	if err != nil {
+		log.Fatalf("main - db.Ping failed: %v", err)
+	}
+	log.Println("db connection verified")
+
 	engine := html.New("./views", ".html")
 	app := fiber.New(fiber.Config{
 		Views: engine,
