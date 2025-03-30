@@ -17,6 +17,9 @@ type todo struct {
 }
 
 func main() {
+	// Add line numbers and filenames to logs
+	log.SetFlags(log.LstdFlags | log.Lshortfile)
+
 	connStr := "postgresql://postgres:DaVinci@localhost/todos?sslmode=disable"
 	log.Printf("connStr: %q", connStr)
 	// Connect to database
