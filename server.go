@@ -4,7 +4,10 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"maps"
 	"os"
+	"slices"
+	"strconv"
 
 	_ "github.com/lib/pq"
 
@@ -13,7 +16,8 @@ import (
 )
 
 type todo struct {
-	Item string
+	Item     string
+	Priority int // Range 0..9, 0=highest, 9=lowest
 }
 
 func main() {
@@ -35,6 +39,10 @@ func main() {
 		log.Fatalf("main - db.Ping failed: %v", err)
 	}
 	log.Println("db connection verified")
+
+	if err := dbInit(db); err != nil {
+		log.Fatalf("main - dbInit failed: %v", err)
+	}
 
 	engine := html.New("./views", ".html")
 	app := fiber.New(fiber.Config{
@@ -70,8 +78,8 @@ func main() {
 }
 
 func indexHandler(c *fiber.Ctx, db *sql.DB) error {
-	var res string
-	var todos []string
+	var res todo
+	var todos []todo
 	rows, err := db.Query("SELECT * FROM todos")
 	defer rows.Close()
 	if err != nil {
@@ -79,7 +87,7 @@ func indexHandler(c *fiber.Ctx, db *sql.DB) error {
 		c.JSON("An error occured")
 	}
 	for rows.Next() {
-		rows.Scan(&res)
+		rows.Scan(&res.Item, &res.Priority)
 		todos = append(todos, res)
 	}
 	log.Printf("indexHandler - todos: %q", todos)
@@ -89,20 +97,31 @@ func indexHandler(c *fiber.Ctx, db *sql.DB) error {
 }
 
 func postHandler(c *fiber.Ctx, db *sql.DB) error {
-	newTodo := todo{}
-	if err := c.BodyParser(&newTodo); err != nil {
+	type todor struct{ Item, Priority string }
+	rawTodo := todor{}
+	if err := c.BodyParser(&rawTodo); err != nil {
 		log.Printf("An error occured: %v", err)
 		return c.SendString(err.Error())
 	}
-	log.Printf("%v", newTodo)
-	if newTodo.Item != "" {
-		if _, err := db.Exec("INSERT into todos VALUES ($1)", newTodo.Item); err != nil {
-			log.Fatalf("postHandler - db.Exec failed to insert %q: %v", newTodo.Item, err)
+	log.Printf("postHandler - rawTodo: %v", rawTodo)
+	if rawTodo.Item != "" {
+		priority := 9
+		if num, err := strconv.Atoi(rawTodo.Priority); err == nil && num >= 0 && num <= 9 {
+			// TODO: abort on illegal priority
+			priority = num
 		}
+		newTodo := todo{Item: rawTodo.Item, Priority: priority}
+		log.Printf("postHandler - newTodo: %v", newTodo)
+		if _, err := db.Exec("INSERT into todos (item, priority) VALUES ($1, $2)", newTodo.Item, newTodo.Priority); err != nil {
+			log.Fatalf("postHandler - db.Exec failed to insert %q: %v", newTodo, err)
+		}
+	} else {
+		log.Printf("postHandler - newTodo.Item is empty")
 	}
 	return c.Redirect("/")
 }
 
+// TODO: Implement priority update capability as putHandler currently only updates Item
 func putHandler(c *fiber.Ctx, db *sql.DB) error {
 	olditem := c.Query("olditem")
 	newitem := c.Query("newitem")
@@ -122,4 +141,53 @@ func deleteHandler(c *fiber.Ctx, db *sql.DB) error {
 	}
 	log.Println("deleteHandler - delete complete")
 	return c.SendString("deleted")
+}
+
+func dbInit(db *sql.DB) error {
+	columQueryMap := map[string]string{
+		"item":     "ALTER TABLE todos ADD COLUMN item VARCHAR(255);",
+		"priority": "ALTER TABLE todos ADD COLUMN priority INTEGER DEFAULT 9;",
+	}
+	columnNames := slices.Collect(maps.Keys(columQueryMap))
+	columnCount := len(columnNames)
+	existCount := 0
+	createdCount := 0
+
+	for _, columnName := range columnNames {
+		exists, err := checkColumnExistsPostgreSQL(db, "todos", columnName)
+		if err != nil {
+			log.Printf("dbInit - checkColumnExistsPostgreSQL failed for columnName %q: %v", columnName, err)
+			return err
+		}
+		if exists {
+			log.Printf("dbInit - columnName %q (exists)", columnName)
+			existCount++
+			continue
+		}
+		queryText := columQueryMap[columnName]
+		log.Printf("dbInit - queryText %q", queryText)
+		if _, err := db.Exec(queryText); err != nil {
+			log.Printf("dbInit - db.Exec failed for columnName %q: %v", columnName, err)
+			return err
+		}
+		createdCount++
+		log.Printf("dbInit - columnName %q - (created)", columnName)
+	}
+
+	log.Printf("dbInit - column counts - total: %d, exists: %d, created: %d", columnCount, existCount, createdCount)
+	return nil
+}
+
+func checkColumnExistsPostgreSQL(db *sql.DB, tableName, columnName string) (bool, error) {
+	query := `
+		SELECT COUNT(*)
+		FROM INFORMATION_SCHEMA.COLUMNS
+		WHERE TABLE_NAME = $1 AND COLUMN_NAME = $2`
+
+	var count int
+	err := db.QueryRow(query, tableName, columnName).Scan(&count)
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
 }
